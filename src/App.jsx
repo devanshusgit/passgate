@@ -393,7 +393,7 @@ export default function App() {
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  const canScan = file && jd.trim().length > 20 && !scanning
+  const canScan = file && jd.trim().length > 0 && !scanning
 
   const runScan = async () => {
     if (!canScan) return
