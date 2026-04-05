@@ -1,5 +1,9 @@
 import { useState, useRef, useCallback } from 'react'
 import * as mammoth from 'mammoth'
+import * as pdfjs from 'pdfjs-dist'
+
+// Use CDN worker so we don't need to bundle it
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
 
 const S = `
   @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Instrument+Sans:wght@400;500;600&display=swap');
@@ -317,24 +321,31 @@ async function fileToBase64(file) {
   })
 }
 
-async function buildParts(file) {
+async function extractResumeContent(file) {
   const ext = getExt(file.name).toLowerCase()
 
   if (ext === 'docx' || ext === 'doc') {
     const buf = await file.arrayBuffer()
     const result = await mammoth.extractRawText({ arrayBuffer: buf })
-    return [{ text: 'RESUME TEXT:\n' + result.value }]
+    return { text: result.value }
   }
 
   if (ext === 'pdf') {
-    const b64 = await fileToBase64(file)
-    return [{ inline_data: { mime_type: 'application/pdf', data: b64 } }]
+    const arrayBuffer = await file.arrayBuffer()
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
+    let text = ''
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i)
+      const content = await page.getTextContent()
+      text += content.items.map(item => item.str).join(' ') + '\n'
+    }
+    return { text: text.trim() || 'Could not extract text from PDF — try a DOCX version.' }
   }
 
   if (['jpg', 'jpeg', 'png'].includes(ext)) {
     const b64 = await fileToBase64(file)
     const mime = ext === 'png' ? 'image/png' : 'image/jpeg'
-    return [{ inline_data: { mime_type: mime, data: b64 } }]
+    return { image: b64, imageMime: mime }
   }
 
   throw new Error('Unsupported file type: ' + ext)
@@ -401,13 +412,17 @@ export default function App() {
     }, 800)
 
     try {
-      const fileParts = await buildParts(file)
-      const parts = [...fileParts, { text: 'JOB DESCRIPTION:\n' + jd }]
+      const content = await extractResumeContent(file)
 
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parts })
+        body: JSON.stringify({
+          resumeText: content.text,
+          resumeImage: content.image,
+          resumeImageMime: content.imageMime,
+          jobDescription: jd
+        })
       })
 
       const data = await res.json()
@@ -446,7 +461,7 @@ export default function App() {
           <div className="pg-logo-mark">PG</div>
           <span className="pg-logo-name">PassGate</span>
         </a>
-        <div className="pg-tag">ATS Scanner · Free</div>
+        <div className="pg-tag">ATS Scanner · Groq · Free</div>
       </header>
 
       <div className="pg-wrap">
@@ -650,7 +665,7 @@ export default function App() {
 
         {/* FOOTER */}
         <footer className="pg-footer">
-          PASSGATE · GEMINI FLASH FREE TIER · 1,500 SCANS/DAY · ZERO COST
+          PASSGATE · GROQ FREE TIER · 14,400 SCANS/DAY · ZERO COST
         </footer>
       </div>
     </>
